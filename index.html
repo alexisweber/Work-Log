@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Work log</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main class="log" id="log" data-state="idle">
+
+    <!-- Title + running clock -------------------------------------------->
+    <header class="head">
+      <label class="visually-hidden" for="title">Title</label>
+      <input id="title" class="title" type="text" placeholder="Title" autocomplete="off" maxlength="2000">
+      <div class="clock">
+        <span class="clock__dot" aria-hidden="true"></span>
+        <span class="clock__state" id="clock-state" aria-live="polite">Not started</span>
+        <span class="clock__time" id="clock-time">0:00:00</span>
+      </div>
+    </header>
+
+    <!-- Row 1 · Goals: Long-Term → Short-Term → Milestone ----------------->
+    <fieldset class="group">
+      <legend>Goals</legend>
+      <div class="grid">
+        <div class="field">
+          <label for="primary">Primary <span class="source">Long-Term Goals</span></label>
+          <div class="select"><select id="primary"><option value="">Loading…</option></select></div>
+        </div>
+        <div class="field">
+          <label for="secondary">Secondary <span class="source">Short-Term Goals</span></label>
+          <div class="select"><select id="secondary"><option value="">Loading…</option></select></div>
+        </div>
+        <div class="field">
+          <label for="tertiary">Tertiary <span class="source">Milestones</span></label>
+          <div class="select"><select id="tertiary"><option value="">Loading…</option></select></div>
+        </div>
+      </div>
+    </fieldset>
+
+    <!-- Row 2 · Classifiers: Stage, Category, Category's own type -------->
+    <fieldset class="group">
+      <legend>Classifiers</legend>
+      <div class="grid">
+        <div class="field">
+          <label for="stage">Stage</label>
+          <div class="select"><select id="stage"></select></div>
+        </div>
+        <div class="field">
+          <label for="category">Category</label>
+          <div class="select"><select id="category"></select></div>
+        </div>
+        <!-- Third cell stays blank until Category is chosen. JS fills the
+             label with the chosen category's name and the list with its
+             own options. Support has no second level, so it stays blank. -->
+        <div class="field" id="subtype-field" hidden>
+          <label for="subtype" id="subtype-label">Type</label>
+          <div class="select"><select id="subtype"></select></div>
+        </div>
+      </div>
+    </fieldset>
+
+    <!-- Row 3 · Links: Task, Meeting, Request, JIRA ---------------------->
+    <fieldset class="group">
+      <legend>Links</legend>
+      <div class="grid">
+        <div class="field">
+          <label for="task">Task <span class="source">Tasks</span></label>
+          <div class="select"><select id="task"><option value="">Loading…</option></select></div>
+        </div>
+
+        <div class="field">
+          <label for="meeting">Meeting <span class="source">MeetingDb</span></label>
+          <div class="combo">
+            <input id="meeting" type="text" role="combobox" aria-expanded="false"
+                   aria-controls="meeting-list" aria-autocomplete="list" aria-describedby="meeting-state"
+                   autocomplete="off" placeholder="Newest first, or type to search">
+            <ul class="combo__list" id="meeting-list" role="listbox" aria-label="Meetings" hidden></ul>
+          </div>
+          <p class="pick" id="meeting-state" role="status"></p>
+        </div>
+
+        <div class="field">
+          <label for="request">Requests <span class="source">RequestsDb</span></label>
+          <div class="combo">
+            <input id="request" type="text" role="combobox" aria-expanded="false"
+                   aria-controls="request-list" aria-autocomplete="list" aria-describedby="request-state"
+                   autocomplete="off" placeholder="Newest first, or type to search">
+            <ul class="combo__list" id="request-list" role="listbox" aria-label="Requests" hidden></ul>
+          </div>
+          <p class="pick" id="request-state" role="status"></p>
+        </div>
+
+        <div class="field">
+          <label for="jira">JIRA ticket <span class="source">optional</span></label>
+          <input id="jira" class="text-input" type="text" autocomplete="off"
+                 placeholder="Ticket key or full URL">
+        </div>
+      </div>
+    </fieldset>
+
+    <!-- Start / Stop / New ----------------------------------------------->
+    <div class="controls">
+      <button type="button" class="btn btn--start" id="start" disabled>Start</button>
+      <button type="button" class="btn btn--stop"  id="stop"  disabled>Stop</button>
+      <button type="button" class="btn btn--new"   id="new"   disabled>New</button>
+      <p class="hint" id="hint"></p>
+    </div>
+
+    <!-- Pipeline: link, packages, platform, file. Link, Packages and
+         Platform are editable any time and autosave; the file needs an
+         entry, like Files. Packages and Platform become selects later. -->
+    <fieldset class="group">
+      <legend>Pipeline</legend>
+      <div class="grid">
+        <div class="field">
+          <label for="pipeline-link">Pipeline Link <span class="source">URL</span></label>
+          <input id="pipeline-link" class="text-input" type="url" autocomplete="off"
+                 placeholder="Repo, workflow or docs link">
+        </div>
+        <div class="field">
+          <label for="packages">Packages</label>
+          <input id="packages" class="text-input" type="text" autocomplete="off"
+                 placeholder="e.g. Seurat 5.1, scanpy 1.10">
+        </div>
+        <div class="field">
+          <label for="platform">Platform</label>
+          <input id="platform" class="text-input" type="text" autocomplete="off"
+                 placeholder="e.g. HPC, AWS, local">
+        </div>
+        <div class="field field--wide">
+          <span class="label" id="pipeline-file-label">Pipeline File</span>
+          <label class="drop is-disabled" id="pipeline-drop" for="pipeline-file">
+            <input class="visually-hidden" type="file" id="pipeline-file" multiple disabled
+                   aria-labelledby="pipeline-file-label pipeline-drop-text">
+            <span id="pipeline-drop-text">Start an entry to attach pipeline files</span>
+          </label>
+          <ul class="file-list" id="pipeline-file-list"></ul>
+        </div>
+      </div>
+    </fieldset>
+
+    <!-- Description / Output / Files ------------------------------------->
+    <section class="notes" aria-label="Entry details">
+      <div class="field">
+        <label for="description">Description</label>
+        <textarea id="description" placeholder="What did you work on?"></textarea>
+      </div>
+      <div class="field">
+        <label for="output">Output</label>
+        <textarea id="output" placeholder="Results, file paths, links"></textarea>
+      </div>
+      <div class="field field--wide">
+        <span class="label" id="files-label">Files</span>
+        <label class="drop is-disabled" id="drop" for="files">
+          <input class="visually-hidden" type="file" id="files" multiple disabled aria-labelledby="files-label drop-text">
+          <span id="drop-text">Start an entry to attach files</span>
+        </label>
+        <ul class="file-list" id="file-list"></ul>
+      </div>
+    </section>
+
+    <footer class="foot">
+      <span id="sync" role="status"></span>
+      <div class="foot__right">
+        <button type="button" class="link-btn" id="reload">Reload lists</button>
+        <div class="seg" role="group" aria-label="Theme">
+          <button type="button" class="seg__btn" id="theme-light" aria-pressed="false">Light</button>
+          <button type="button" class="seg__btn" id="theme-dark"  aria-pressed="false">Dark</button>
+        </div>
+      </div>
+    </footer>
+  </main>
+</body>
+</html>
