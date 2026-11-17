@@ -4,9 +4,9 @@
  * Layout
  * ------
  *  Title
- *  Goals       Primary · Secondary · Tertiary        (relations)
+ *  Goals       Primary · Secondary · Tertiary        (type-ahead relations)
  *  Classifiers Stage · Category · Category's type    (selects)
- *  Links       Task · Meeting · Requests · JIRA      (relations + URL)
+ *  Links       Task · Meeting · Requests · JIRA      (type-ahead relations + URL)
  *  Buttons     Start · Stop · New
  *  Pipeline    Pipeline Link · Packages · Platform · Pipeline File
  *  Details     Description · Output · Files
@@ -14,8 +14,8 @@
  * Flow
  * ----
  *  1. On load, fetch page names from the linked databases and fill the
- *     dropdowns. Meeting and Requests are comboboxes: newest pages first,
- *     closest title match as you type.
+ *     pickers. Every link is a combobox: newest pages first, closest title
+ *     match as you type, and older pages found by searching Notion.
  *  2. Start → create a Work Log entry with the fields above.
  *  3. Stop  → write the Stop time to that entry.
  *  4. Description, Output, Pipeline Link, Packages and Platform autosave;
@@ -65,19 +65,21 @@ const CONFIG = Object.freeze({
    2. Taxonomy
    ========================================================================== */
 
-/** Dropdowns whose options come from Notion. Keys match SOURCES in worker.js. */
-const RELATION_KEYS = ['primary', 'secondary', 'tertiary', 'task'];
+/**
+ * Every link to a Notion page. Each is a type-ahead picker: the newest pages
+ * first, and the closest title match as you type. Keys match SOURCES in
+ * worker.js and the element ids in index.html.
+ */
+const COMBO_KEYS = ['primary', 'secondary', 'tertiary', 'task', 'meeting', 'request'];
 
-/** Type-ahead pickers, also from Notion but searched rather than listed. */
-const COMBO_KEYS = ['meeting', 'request'];
-
-/** Every <select> on the page, in the order the hint lists them. */
-const SELECT_KEYS = ['primary', 'secondary', 'tertiary', 'stage', 'category', 'subtype', 'task'];
+/** The plain <select>s: fixed local lists, not Notion pages. */
+const SELECT_KEYS = ['stage', 'category', 'subtype'];
 
 /**
  * What must be filled before Start, Stop and New unlock. Subtype is added
  * only when the chosen Category has a second level. Meeting, Requests and
- * JIRA are optional links.
+ * JIRA are optional links. A link counts as filled only once a page has been
+ * picked from its list; typed text that was never picked doesn't.
  *
  * To make a link required too, add its key here (for example 'meeting').
  */
@@ -150,8 +152,8 @@ const subtypesFor = (category) => SUBTYPES[category] || null;
  *
  * @typedef {Object} WidgetState
  * @property {string} title
- * @property {Record<string,string>} picks   Select key → page id (relations) or option name
- * @property {Record<string,PageRef|null>} links  Combobox key → chosen page
+ * @property {Record<string,string>} picks   Select key → chosen option name
+ * @property {Record<string,PageRef|null>} links  Picker key → chosen Notion page
  * @property {string} jira
  * @property {string} description
  * @property {string} output
@@ -206,6 +208,19 @@ function loadState() {
     links: { ...base.links, ...(saved.links || {}) },
   };
   for (const key of FILE_KEYS) merged[key] = Array.isArray(saved[key]) ? saved[key] : [];
+
+  // Primary, Secondary, Tertiary and Task used to be plain selects that kept
+  // a page id in `picks`. Carry an in-progress choice over into `links`, with
+  // its name looked up from the cached lists.
+  const cached = readJSON(CONFIG.optionsKey) || {};
+  for (const key of COMBO_KEYS) {
+    const legacyId = saved.picks?.[key];
+    if (legacyId && !merged.links[key]) {
+      const hit = (cached[key] || []).find((page) => page.id === legacyId);
+      merged.links[key] = { id: legacyId, name: hit?.name || 'Saved selection' };
+    }
+    delete merged.picks[key];
+  }
 
   // A subtype can't outlive a category change, or a rename such as
   // "Pipeline development" → "Pipeline Dev" made after it was saved.
@@ -438,26 +453,15 @@ function renderSubtype() {
   fillSelect('subtype', list.map((name) => ({ id: name, name })), 'Choose…');
 }
 
-/** Fill the relation dropdowns from fetched options. */
-function fillRelationSelects() {
-  // "No entries" is only true when Notion answered with an empty database.
-  // While loading, or after a failed load, the placeholder says so instead.
-  const emptyLabel = listsStatus === 'loading' ? 'Loading…'
-    : listsStatus === 'error' ? 'Couldn’t load. See the message below.'
-    : 'No entries found';
-
-  for (const key of RELATION_KEYS) {
-    fillSelect(key, Array.isArray(options[key]) ? options[key] : [], 'Choose…', emptyLabel);
-  }
-}
-
-/** Where the last attempt to fetch the Notion lists stands. */
+/**
+ * Where the last attempt to fetch the Notion lists stands. The pickers use it
+ * so an empty list says why: still loading, failed, or genuinely empty.
+ */
 let listsStatus = 'loading';   // 'loading' | 'ok' | 'error'
 
-/** Show cached lists instantly, then refresh from Notion. */
+/** Show cached lists instantly (the pickers start from them), then refresh. */
 async function loadOptions() {
   listsStatus = 'loading';
-  fillRelationSelects();
 
   el.reload.disabled = true;
   setSync('Loading lists…');
@@ -465,22 +469,21 @@ async function loadOptions() {
     options = await api('/options');
     writeJSON(CONFIG.optionsKey, options);
     listsStatus = 'ok';
-    fillRelationSelects();
     for (const key of COMBO_KEYS) combos[key].setRecent(options[key] || []);
     setSync('Lists up to date');
   } catch (err) {
     listsStatus = 'error';
-    fillRelationSelects();
     fail(err);
   } finally {
     el.reload.disabled = false;
+    for (const key of COMBO_KEYS) combos[key].refresh();
     render();
   }
 }
 
 
 /* ==========================================================================
-   9. Comboboxes (Meeting, Requests)
+   9. Type-ahead pickers (Primary, Secondary, Tertiary, Task, Meeting, Requests)
    ========================================================================== */
 
 /**
@@ -511,7 +514,7 @@ function matchScore(name, query) {
  * locally and, after a short pause, also asks the Worker to search the whole
  * database by title so older pages are reachable.
  *
- * @param {'meeting'|'request'} key
+ * @param {'primary'|'secondary'|'tertiary'|'task'|'meeting'|'request'} key
  */
 function createCombo(key) {
   const input = $(key);
@@ -568,7 +571,11 @@ function createCombo(key) {
   function emptyItem() {
     const li = document.createElement('li');
     li.className = 'is-empty';
-    li.textContent = recent.length ? 'No match' : 'No pages found';
+    // An empty list means different things: say which.
+    li.textContent = recent.length ? 'No match'
+      : listsStatus === 'loading' ? 'Loading…'
+      : listsStatus === 'error' ? 'Couldn’t load. See the message below.'
+      : 'No pages found';
     return li;
   }
 
@@ -626,7 +633,9 @@ function createCombo(key) {
     }, CONFIG.searchMs);
   }
 
-  input.addEventListener('focus', open);
+  let focused = false;       // the warning waits until you leave the field
+
+  input.addEventListener('focus', () => { focused = true; render(); open(); });
   input.addEventListener('click', open);
 
   input.addEventListener('input', () => {
@@ -653,11 +662,12 @@ function createCombo(key) {
   });
 
   input.addEventListener('blur', () => {
+    focused = false;
     close();
     // Free text that was never picked isn't a link; show the chosen name back.
     const picked = state.links[key];
     if (picked && input.value !== picked.name) input.value = picked.name;
-    else if (!picked && input.value) render();
+    else if (!picked) render();    // warns if text is left unlinked, resets if emptied
   });
 
   return {
@@ -665,16 +675,24 @@ function createCombo(key) {
     setRecent(pages) {
       recent = Array.isArray(pages) ? pages : [];
     },
+    /** Redraw the list if it's open, e.g. when the lists finish loading. */
+    refresh() {
+      if (!list.hidden) open();
+    },
     /** Push state into the input and its status line. */
     sync() {
       const picked = state.links[key];
       if (picked) input.value = picked.name;     // free text is left as typed
       input.disabled = busy || Boolean(state.pageId);
       input.classList.toggle('is-picked', Boolean(picked));
-      status.dataset.picked = String(Boolean(picked));
-      status.textContent = picked ? `Linked to ${picked.name}`
-        : input.value.trim() ? 'Not linked — choose a page from the list'
-        : '';
+
+      // The line below names the source database. A chosen page shows as the
+      // input's own text and green outline, so it only changes to a warning
+      // when typed text isn't a link yet.
+      const unlinked = !picked && !focused && Boolean(input.value.trim());
+      const text = unlinked ? 'Not linked. Choose a page from the list.' : status.dataset.db;
+      if (status.textContent !== text) status.textContent = text;   // don't re-announce
+      status.dataset.warn = String(unlinked);
     },
     reset() {
       input.value = '';
@@ -699,14 +717,17 @@ function requiredNow() {
   return keys;
 }
 
-const isComplete = () =>
-  Boolean(state.title.trim()) && requiredNow().every((k) => state.picks[k]);
+/** Whether a required field has a real choice: a picked page or an option. */
+const isFilled = (key) =>
+  COMBO_KEYS.includes(key) ? Boolean(state.links[key]?.id) : Boolean(state.picks[key]);
+
+const isComplete = () => Boolean(state.title.trim()) && requiredNow().every(isFilled);
 
 /** "Add a title and choose Stage and Task to continue." */
 function missingHint() {
   const parts = [];
   if (!state.title.trim()) parts.push('add a title');
-  const unpicked = requiredNow().filter((k) => !state.picks[k])
+  const unpicked = requiredNow().filter((k) => !isFilled(k))
     .map((k) => (k === 'subtype' ? state.picks.category : LABELS[k]));
   if (unpicked.length) parts.push(`choose ${joinList(unpicked)}`);
   const text = parts.join(' and ');
@@ -718,6 +739,7 @@ function applyStateToForm() {
   el.title.value = state.title;
   el.jira.value = state.jira;
   for (const key of TEXT_KEYS) el[key].value = state[key];
+  for (const key of COMBO_KEYS) $(key).value = state.links[key]?.name || '';
   renderSubtype();
   for (const key of SELECT_KEYS) el.selects[key].value = state.picks[key];
 }
@@ -825,14 +847,8 @@ async function startEntry() {
         stage: state.picks.stage,
         category: state.picks.category,
         subtype: state.picks.subtype,                  // '' when Support
-        relations: {
-          primary: state.picks.primary,
-          secondary: state.picks.secondary,
-          tertiary: state.picks.tertiary,
-          task: state.picks.task,
-          meeting: state.links.meeting?.id || '',      // optional
-          request: state.links.request?.id || '',      // optional
-        },
+        // Page ids of every picked link; '' for an optional one left empty.
+        relations: Object.fromEntries(COMBO_KEYS.map((k) => [k, state.links[k]?.id || ''])),
         jira: state.jira.trim(),
         ...textPayload(),                              // include anything typed early
       },
