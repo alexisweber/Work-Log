@@ -440,13 +440,23 @@ function renderSubtype() {
 
 /** Fill the relation dropdowns from fetched options. */
 function fillRelationSelects() {
+  // "No entries" is only true when Notion answered with an empty database.
+  // While loading, or after a failed load, the placeholder says so instead.
+  const emptyLabel = listsStatus === 'loading' ? 'Loading…'
+    : listsStatus === 'error' ? 'Couldn’t load. See the message below.'
+    : 'No entries found';
+
   for (const key of RELATION_KEYS) {
-    fillSelect(key, Array.isArray(options[key]) ? options[key] : [], 'Choose…');
+    fillSelect(key, Array.isArray(options[key]) ? options[key] : [], 'Choose…', emptyLabel);
   }
 }
 
+/** Where the last attempt to fetch the Notion lists stands. */
+let listsStatus = 'loading';   // 'loading' | 'ok' | 'error'
+
 /** Show cached lists instantly, then refresh from Notion. */
 async function loadOptions() {
+  listsStatus = 'loading';
   fillRelationSelects();
 
   el.reload.disabled = true;
@@ -454,10 +464,13 @@ async function loadOptions() {
   try {
     options = await api('/options');
     writeJSON(CONFIG.optionsKey, options);
+    listsStatus = 'ok';
     fillRelationSelects();
     for (const key of COMBO_KEYS) combos[key].setRecent(options[key] || []);
     setSync('Lists up to date');
   } catch (err) {
+    listsStatus = 'error';
+    fillRelationSelects();
     fail(err);
   } finally {
     el.reload.disabled = false;
