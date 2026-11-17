@@ -29,16 +29,34 @@
       <legend>Goals</legend>
       <div class="grid">
         <div class="field">
-          <label for="primary">Primary <span class="source">Long-Term Goals</span></label>
-          <div class="select"><select id="primary"><option value="">Loading…</option></select></div>
+          <label for="primary">Primary</label>
+          <div class="combo">
+            <input id="primary" type="text" role="combobox" aria-expanded="false"
+                   aria-controls="primary-list" aria-autocomplete="list" aria-describedby="primary-state"
+                   autocomplete="off" placeholder="Newest first, or type to search">
+            <ul class="combo__list" id="primary-list" role="listbox" aria-label="Long-Term Goals" hidden></ul>
+          </div>
+          <p class="dbname" id="primary-state" data-db="Long-Term Goals" role="status">Long-Term Goals</p>
         </div>
         <div class="field">
-          <label for="secondary">Secondary <span class="source">Short-Term Goals</span></label>
-          <div class="select"><select id="secondary"><option value="">Loading…</option></select></div>
+          <label for="secondary">Secondary</label>
+          <div class="combo">
+            <input id="secondary" type="text" role="combobox" aria-expanded="false"
+                   aria-controls="secondary-list" aria-autocomplete="list" aria-describedby="secondary-state"
+                   autocomplete="off" placeholder="Newest first, or type to search">
+            <ul class="combo__list" id="secondary-list" role="listbox" aria-label="Short-Term Goals" hidden></ul>
+          </div>
+          <p class="dbname" id="secondary-state" data-db="Short-Term Goals" role="status">Short-Term Goals</p>
         </div>
         <div class="field">
-          <label for="tertiary">Tertiary <span class="source">Milestones</span></label>
-          <div class="select"><select id="tertiary"><option value="">Loading…</option></select></div>
+          <label for="tertiary">Tertiary</label>
+          <div class="combo">
+            <input id="tertiary" type="text" role="combobox" aria-expanded="false"
+                   aria-controls="tertiary-list" aria-autocomplete="list" aria-describedby="tertiary-state"
+                   autocomplete="off" placeholder="Newest first, or type to search">
+            <ul class="combo__list" id="tertiary-list" role="listbox" aria-label="Milestones" hidden></ul>
+          </div>
+          <p class="dbname" id="tertiary-state" data-db="Milestones" role="status">Milestones</p>
         </div>
       </div>
     </fieldset>
@@ -65,41 +83,41 @@
       </div>
     </fieldset>
 
-    <!-- Row 3 · Links: Task, Meeting, Request, JIRA ---------------------->
+    <!-- Row 3 · Links: Task, Meeting, Request ------------------------------>
     <fieldset class="group">
       <legend>Links</legend>
       <div class="grid">
         <div class="field">
-          <label for="task">Task <span class="source">Tasks</span></label>
-          <div class="select"><select id="task"><option value="">Loading…</option></select></div>
+          <label for="task">Task</label>
+          <div class="combo">
+            <input id="task" type="text" role="combobox" aria-expanded="false"
+                   aria-controls="task-list" aria-autocomplete="list" aria-describedby="task-state"
+                   autocomplete="off" placeholder="Newest first, or type to search">
+            <ul class="combo__list" id="task-list" role="listbox" aria-label="Tasks" hidden></ul>
+          </div>
+          <p class="dbname" id="task-state" data-db="Tasks" role="status">Tasks</p>
         </div>
 
         <div class="field">
-          <label for="meeting">Meeting <span class="source">MeetingDb</span></label>
+          <label for="meeting">Meeting</label>
           <div class="combo">
             <input id="meeting" type="text" role="combobox" aria-expanded="false"
                    aria-controls="meeting-list" aria-autocomplete="list" aria-describedby="meeting-state"
                    autocomplete="off" placeholder="Newest first, or type to search">
             <ul class="combo__list" id="meeting-list" role="listbox" aria-label="Meetings" hidden></ul>
           </div>
-          <p class="pick" id="meeting-state" role="status"></p>
+          <p class="dbname" id="meeting-state" data-db="MeetingDb" role="status">MeetingDb</p>
         </div>
 
         <div class="field">
-          <label for="request">Requests <span class="source">RequestsDb</span></label>
+          <label for="request">Requests</label>
           <div class="combo">
             <input id="request" type="text" role="combobox" aria-expanded="false"
                    aria-controls="request-list" aria-autocomplete="list" aria-describedby="request-state"
                    autocomplete="off" placeholder="Newest first, or type to search">
             <ul class="combo__list" id="request-list" role="listbox" aria-label="Requests" hidden></ul>
           </div>
-          <p class="pick" id="request-state" role="status"></p>
-        </div>
-
-        <div class="field">
-          <label for="jira">JIRA ticket <span class="source">optional</span></label>
-          <input id="jira" class="text-input" type="text" autocomplete="off"
-                 placeholder="Ticket key or full URL">
+          <p class="dbname" id="request-state" data-db="RequestsDb" role="status">RequestsDb</p>
         </div>
       </div>
     </fieldset>
@@ -110,6 +128,15 @@
       <button type="button" class="btn btn--stop"  id="stop"  disabled>Stop</button>
       <button type="button" class="btn btn--new"   id="new"   disabled>New</button>
       <p class="hint" id="hint"></p>
+    </div>
+
+    <!-- JIRA Ticket: optional, sent when the entry is created. -->
+    <div class="grid">
+      <div class="field">
+        <label for="jira">JIRA Ticket <span class="source">URL</span></label>
+        <input id="jira" class="text-input" type="text" autocomplete="off"
+               placeholder="Ticket link">
+      </div>
     </div>
 
     <!-- Pipeline: link, packages, platform, file. Link, Packages and
