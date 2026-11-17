@@ -1,0 +1,499 @@
+/* ==========================================================================
+   Work log widget · style.css
+
+   1. Tokens         5. Comboboxes
+   2. Base           6. Controls
+   3. Title & clock  7. Notes & files
+   4. Fields         8. Footer & theme toggle
+                     9. Utilities & motion
+   ========================================================================== */
+
+
+/* 1. Tokens ----------------------------------------------------------------
+   Every color derives from these; the soft tints use color-mix() so they
+   follow automatically when a base token changes (same approach as the
+   weather widget). Dark values match Notion's dark page (#191919).
+
+   Theme resolution, in order:
+     no data-theme  → follow the operating system
+     data-theme     → "light" or "dark", set by the footer toggle (saved)
+                      or by #theme= in the embed URL */
+
+:root {
+  --ink:    #1E2A2F;
+  --muted:  #5E6B70;
+  --paper:  #FFFFFF;
+  --field:  #F1F4F3;
+  --rule:   #D6DDDA;
+  --run:    #1F6F5C;
+  --stop:   #A2412F;
+  --focus:  #2B5FAE;
+  --on-run: #FFFFFF;
+
+  --run-soft: color-mix(in srgb, var(--run) 12%, var(--paper));
+  --font: "Instrument Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --radius: 6px;
+  --lift: 0 6px 18px rgb(0 0 0 / 0.14);
+  color-scheme: light;
+}
+
+/* One dark palette, applied either by the system or by an explicit choice. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ink:    #E4E9E7;
+    --muted:  #97A39F;
+    --paper:  #191919;
+    --field:  #242827;
+    --rule:   #3A4240;
+    --run:    #5DBB9C;
+    --stop:   #E08A74;
+    --focus:  #7FA7E8;
+    --on-run: #0F1A16;
+    --lift: 0 6px 18px rgb(0 0 0 / 0.5);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --ink:    #E4E9E7;
+  --muted:  #97A39F;
+  --paper:  #191919;
+  --field:  #242827;
+  --rule:   #3A4240;
+  --run:    #5DBB9C;
+  --stop:   #E08A74;
+  --focus:  #7FA7E8;
+  --on-run: #0F1A16;
+  --lift: 0 6px 18px rgb(0 0 0 / 0.5);
+  color-scheme: dark;
+}
+
+
+/* 2. Base ----------------------------------------------------------------- */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+/* Author display rules would otherwise beat the UA [hidden] rule. */
+[hidden] { display: none !important; }
+
+html, body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+body {
+  font: 400 15px/1.5 var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+
+.log {
+  display: grid;
+  gap: 1.25rem;
+  max-width: 760px;
+  padding: 1.25rem 1rem 1rem;
+}
+
+:where(button, select, textarea, input):focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+
+/* 3. Title & clock ---------------------------------------------------------
+   The one expressive moment: while an entry is running, the title's rule
+   becomes a moving dashed "tape". Stopped entries get a solid rule. */
+
+.head { display: grid; gap: 0.35rem; }
+
+.title {
+  width: 100%;
+  padding: 0.2rem 0 0.45rem;
+  border: 0;
+  color: inherit;
+  font: 600 1.5rem/1.25 var(--font);
+  letter-spacing: -0.01em;
+  background: linear-gradient(var(--rule), var(--rule)) 0 100% / 100% 1px no-repeat;
+}
+
+.title::placeholder { color: var(--muted); opacity: 0.7; }
+
+.title:focus,
+.title:focus-visible {
+  outline: none;
+  background: linear-gradient(var(--ink), var(--ink)) 0 100% / 100% 2px no-repeat;
+}
+
+[data-state="running"] .title {
+  background: linear-gradient(90deg, var(--run) 0 14px, transparent 14px) 0 100% / 22px 2px repeat-x;
+  animation: tape 1.2s linear infinite;
+}
+
+[data-state="stopped"] .title {
+  background: linear-gradient(var(--stop), var(--stop)) 0 100% / 100% 2px no-repeat;
+}
+
+@keyframes tape {
+  to { background-position: 22px 100%; }
+}
+
+.clock {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.clock__dot {
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--rule);
+}
+
+.clock__time {
+  margin-left: auto;
+  color: var(--ink);
+  font-size: 1.125rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-state="running"] .clock__dot  { background: var(--run); }
+[data-state="running"] .clock__time { color: var(--run); }
+[data-state="stopped"] .clock__dot  { background: var(--stop); }
+
+
+/* 4. Fields ---------------------------------------------------------------- */
+
+.group {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.group legend {
+  margin-bottom: 0.5rem;
+  padding: 0;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.field { display: grid; gap: 0.3rem; min-width: 0; align-content: start; }
+
+.field--wide { grid-column: 1 / -1; }
+
+.field > label:not(.drop),
+.field .label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.source {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 400;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.select { position: relative; }
+
+.select::after {                      /* chevron */
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 0.8rem;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-right: 1.5px solid var(--muted);
+  border-bottom: 1.5px solid var(--muted);
+  transform: translateY(-70%) rotate(45deg);
+  pointer-events: none;
+}
+
+select,
+textarea,
+.text-input,
+.combo input {
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: var(--field);
+  color: var(--ink);
+  font: inherit;
+}
+
+select {
+  appearance: none;
+  padding: 0.5rem 2rem 0.5rem 0.625rem;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.text-input,
+.combo input { padding: 0.5rem 0.625rem; }
+
+.text-input::placeholder,
+.combo input::placeholder { color: var(--muted); }
+
+select:hover:not(:disabled),
+textarea:hover,
+.text-input:hover:not(:disabled),
+.combo input:hover:not(:disabled) { border-color: var(--rule); }
+
+select:disabled,
+.text-input:disabled,
+.combo input:disabled { opacity: 0.75; cursor: default; }
+
+
+/* 5. Comboboxes ------------------------------------------------------------
+   Meeting and Requests. The list shows the newest pages when empty and the
+   closest title matches as you type. */
+
+.combo { position: relative; }
+
+.combo input.is-picked { border-color: var(--run); }
+
+.combo__list {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  right: 0;
+  max-height: 13rem;
+  margin: 0;
+  padding: 0.25rem;
+  overflow-y: auto;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--paper);
+  box-shadow: var(--lift);
+  list-style: none;
+}
+
+.combo__list li {
+  padding: 0.4rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.combo__list li[aria-selected="true"] { background: var(--run-soft); }
+.combo__list li.is-empty { color: var(--muted); cursor: default; }
+
+.pick {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  min-height: 1.1em;
+}
+
+.pick[data-picked="true"] { color: var(--run); }
+
+
+/* 6. Controls -------------------------------------------------------------- */
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.625rem;
+}
+
+.btn {
+  padding: 0.65rem 1.15rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  font: 600 0.875rem/1 var(--font);
+  cursor: pointer;
+}
+
+.btn:disabled { opacity: 0.38; cursor: not-allowed; }
+
+.btn--start { background: var(--run); color: var(--on-run); }
+.btn--stop  { background: transparent; color: var(--stop); border-color: currentColor; }
+.btn--new   { background: transparent; color: var(--ink); border-color: var(--rule); }
+
+.btn--start:not(:disabled):hover { background: color-mix(in srgb, var(--run) 85%, var(--ink)); }
+.btn--stop:not(:disabled):hover  { background: color-mix(in srgb, var(--stop) 8%, transparent); }
+.btn--new:not(:disabled):hover   { background: var(--field); }
+
+.hint {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+
+/* 7. Notes & files --------------------------------------------------------- */
+
+.notes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+textarea {
+  min-height: 6.5rem;
+  padding: 0.55rem 0.625rem;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+textarea::placeholder { color: var(--muted); }
+
+.drop {
+  display: flex;
+  align-items: center;
+  padding: 0.7rem 0.75rem;
+  border: 1px dashed var(--rule);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-size: 0.875rem;
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.drop:hover,
+.drop.is-over {
+  border-color: var(--run);
+  background: var(--run-soft);
+  color: var(--ink);
+}
+
+.drop:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+.drop.is-disabled,
+.drop.is-disabled:hover {
+  border-color: var(--rule);
+  background: none;
+  color: var(--muted);
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.file-list {
+  display: grid;
+  margin: 0.25rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.file-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--rule);
+  font-size: 0.875rem;
+}
+
+.file-list li span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+
+/* 8. Footer & theme toggle ------------------------------------------------- */
+
+.foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--rule);
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.foot__right {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+#sync[data-tone="error"] { color: var(--stop); }
+
+.link-btn {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.link-btn:hover:not(:disabled) { color: var(--ink); }
+.link-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.seg {
+  display: flex;
+  padding: 2px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+}
+
+.seg__btn {
+  padding: 0.2rem 0.6rem;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.seg__btn:hover { color: var(--ink); }
+
+.seg__btn[aria-pressed="true"] {
+  background: var(--field);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+
+/* 9. Utilities & motion ---------------------------------------------------- */
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+  .grid,
+  .notes { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-state="running"] .title { animation: none; }
+}
