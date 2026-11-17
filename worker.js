@@ -35,20 +35,31 @@ const NOTION_VERSION = '2022-06-28';
 const WORK_LOG_DB = 'PASTE_WORK_LOG_DATABASE_ID';
 
 /**
- * One entry per linked field. Keys match RELATION_KEYS and COMBO_KEYS in app.js.
+ * Long-Term and Short-Term Goals only offer pages whose "Category" select is
+ * "Research". The property in those databases must be a Select named exactly
+ * "Category". The filter applies to both the recent list and the title search.
+ */
+const RESEARCH_ONLY = { property: 'Category', select: { equals: 'Research' } };
+
+/**
+ * One entry per linked field. Keys match COMBO_KEYS in app.js.
  *   database  where the names come from
  *   relation  the Work Log relation property it fills
  *   required  whether Start refuses without it
- *   recent    true  → newest pages first, for the type-ahead pickers
- *             false → the whole database, sorted by name, for a dropdown
+ *   recent    true  → newest pages first, and searchable by title. Every
+ *                     field in the widget is a type-ahead picker, so keep
+ *                     this true.
+ *             false → the whole database sorted by name. Only useful if a
+ *                     field is ever turned back into a plain dropdown; such
+ *                     a field can't be searched.
  *   filter    optional Notion filter to shorten the list, for example
  *             { property: 'Status', status: { does_not_equal: 'Done' } }
  */
 const SOURCES = {
-  primary:   { database: 'PASTE_LONG_TERM_GOALS_DATABASE_ID',  relation: 'Long-Term Goals',  required: true,  recent: false, filter: null },
-  secondary: { database: 'PASTE_SHORT_TERM_GOALS_DATABASE_ID', relation: 'Short-Term Goals', required: true,  recent: false, filter: null },
-  tertiary:  { database: 'PASTE_MILESTONES_DATABASE_ID',       relation: 'Milestones',       required: true,  recent: false, filter: null },
-  task:      { database: 'PASTE_TASKS_DATABASE_ID',            relation: 'Tasks',            required: true,  recent: false, filter: null },
+  primary:   { database: 'PASTE_LONG_TERM_GOALS_DATABASE_ID',  relation: 'Long-Term Goals',  required: true,  recent: true,  filter: RESEARCH_ONLY },
+  secondary: { database: 'PASTE_SHORT_TERM_GOALS_DATABASE_ID', relation: 'Short-Term Goals', required: true,  recent: true,  filter: RESEARCH_ONLY },
+  tertiary:  { database: 'PASTE_MILESTONES_DATABASE_ID',       relation: 'Milestones',       required: true,  recent: true,  filter: null },
+  task:      { database: 'PASTE_TASKS_DATABASE_ID',            relation: 'Tasks',            required: true,  recent: true,  filter: null },
   meeting:   { database: 'PASTE_MEETING_DB_DATABASE_ID',       relation: 'Meeting',          required: false, recent: true,  filter: null },
   request:   { database: 'PASTE_REQUESTS_DB_DATABASE_ID',      relation: 'Requests',         required: false, recent: true,  filter: null },
 };
@@ -154,14 +165,33 @@ export default {
 
 /** GET /options → { primary: [{id, name}], …, meeting: […], request: […] } */
 async function listOptions(env) {
-  const lists = await Promise.all(
-    Object.entries(SOURCES).map(async ([key, source]) => [
-      key,
-      source.recent
-        ? await queryRecent(env, source.database, source.filter)
-        : await queryAll(env, source.database, source.filter),
-    ]),
+  const entries = Object.entries(SOURCES);
+
+  // allSettled, not all: one bad database shouldn't hide the others, and the
+  // error should name every dropdown that failed so they can be fixed in one pass.
+  const settled = await Promise.allSettled(
+    entries.map(([, source]) => (source.recent
+      ? queryRecent(env, source.database, source.filter)
+      : queryAll(env, source.database, source.filter))),
   );
+
+  const failures = [];
+  const lists = settled.map((result, i) => {
+    const [key, source] = entries[i];
+    if (result.status === 'fulfilled') return [key, result.value];
+    failures.push({ source, error: result.reason });
+    return [key, []];
+  });
+
+  if (failures.length) {
+    const lines = failures.map(({ source, error }) => {
+      const idStart = normalizeId(source.database).slice(0, 8);
+      return error.status === 404
+        ? `${source.relation}: not found, or not shared with the integration (ID starts ${idStart})`
+        : `${source.relation}: ${error.message}`;
+    });
+    throw new HttpError(failures[0].error.status || 500, lines.join(' | '));
+  }
   return Object.fromEntries(lists);
 }
 
@@ -473,9 +503,20 @@ function assertConfigured(env) {
   if (!env.NOTION_TOKEN || !env.WIDGET_KEY) {
     throw new HttpError(500, 'Worker is missing NOTION_TOKEN or WIDGET_KEY.');
   }
-  const ids = [WORK_LOG_DB, ...Object.values(SOURCES).map((s) => s.database)];
-  if (ids.some((id) => id.startsWith('PASTE_'))) {
+  const slots = [['Work Log', WORK_LOG_DB], ...Object.values(SOURCES).map((s) => [s.relation, s.database])];
+  if (slots.some(([, id]) => id.startsWith('PASTE_'))) {
     throw new HttpError(500, 'Add your database IDs to worker.js.');
+  }
+
+  // Catch the common paste mistakes before Notion turns them into a vague 404.
+  const key = normalizeId(env.WIDGET_KEY);
+  for (const [name, id] of slots) {
+    if (!/^[0-9a-f]{32}$/.test(normalizeId(id))) {
+      throw new HttpError(500, `The ${name} database ID in worker.js isn't a 32-character Notion ID. Copy the part of the database URL before "?v=".`);
+    }
+    if (normalizeId(id) === key) {
+      throw new HttpError(500, `The ${name} database ID in worker.js is the same string as WIDGET_KEY. Paste the real database ID there, and give WIDGET_KEY its own random value.`);
+    }
   }
 }
 
