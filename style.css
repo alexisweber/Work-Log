@@ -20,14 +20,14 @@
                       or by #theme= in the embed URL */
 
 :root {
-  --ink:    #1E2A2F;
-  --muted:  #5E6B70;
+  --ink:    #16263F;
+  --muted:  #49638A;
   --paper:  #FFFFFF;
-  --field:  #F1F4F3;
+  --field:  #F0F2F5;
   --rule:   #D6DDDA;
   --run:    #1F6F5C;
   --stop:   #A2412F;
-  --focus:  #2B5FAE;
+  --focus:  #E8AA1E;
   --on-run: #FFFFFF;
 
   --run-soft: color-mix(in srgb, var(--run) 12%, var(--paper));
@@ -36,7 +36,6 @@
   --lift: 0 6px 18px rgb(0 0 0 / 0.14);
   color-scheme: light;
 }
-
 /* One dark palette, applied either by the system or by an explicit choice. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
