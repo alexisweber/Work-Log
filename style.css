@@ -21,7 +21,7 @@
 
 :root {
   --ink:    #16263F;
-  --muted:  #49638A;
+  --muted:  #7690B7;
   --paper:  #FFFFFF;
   --field:  #F0F2F5;
   --rule:   #D6DDDA;
@@ -39,11 +39,11 @@
 /* One dark palette, applied either by the system or by an explicit choice. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --ink:    #E4E9E7;
-    --muted:  #97A39F;
+    --ink:    #F0F2F5;
+    --muted:  #E8AA1E;
     --paper:  #191919;
-    --field:  #242827;
-    --rule:   #3A4240;
+    --field:  #16263F;
+    --rule:   #233c65;
     --run:    #5DBB9C;
     --stop:   #E08A74;
     --focus:  #7FA7E8;
@@ -54,15 +54,15 @@
 }
 
 :root[data-theme="dark"] {
-  --ink:    #E4E9E7;
-  --muted:  #97A39F;
-  --paper:  #191919;
-  --field:  #242827;
-  --rule:   #3A4240;
-  --run:    #5DBB9C;
-  --stop:   #E08A74;
-  --focus:  #7FA7E8;
-  --on-run: #0F1A16;
+    --ink:    #F0F2F5;
+    --muted:  #E8AA1E;
+    --paper:  #191919;
+    --field:  #16263F;
+    --rule:   #233c65;
+    --run:    #5DBB9C;
+    --stop:   #E08A74;
+    --focus:  #7FA7E8;
+    --on-run: #0F1A16;
   --lift: 0 6px 18px rgb(0 0 0 / 0.5);
   color-scheme: dark;
 }
