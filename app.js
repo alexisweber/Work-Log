@@ -165,7 +165,15 @@ const subtypesFor = (category) => SUBTYPES[category] || null;
  * @property {string|null} stop     ISO 8601 timestamp with UTC offset
  * @property {PageRef[]} files          File uploads attached to Files
  * @property {PageRef[]} pipelineFiles  File uploads attached to Pipeline File
+ * @property {boolean} manual       Manual mode: log a finished item by hand
+ * @property {string} mDate         Manual entry day, YYYY-MM-DD
+ * @property {{start: ClockTime, end: ClockTime}} mTime  Manual entry times
+ *
+ * @typedef {{h: string, m: string, p: ''|'AM'|'PM'}} ClockTime
+ *   12-hour pieces exactly as picked: h "01"–"12", m "00"–"59"
  */
+
+const emptyClock = () => ({ h: '', m: '', p: '' });
 
 /** @returns {WidgetState} */
 function emptyState() {
@@ -184,6 +192,9 @@ function emptyState() {
     stop: null,
     files: [],
     pipelineFiles: [],
+    manual: false,
+    mDate: '',
+    mTime: { start: emptyClock(), end: emptyClock() },
   };
 }
 
@@ -206,6 +217,11 @@ function loadState() {
     ...saved,
     picks: { ...base.picks, ...(saved.picks || {}) },
     links: { ...base.links, ...(saved.links || {}) },
+    manual: saved.manual === true,
+    mTime: {
+      start: { ...base.mTime.start, ...(saved.mTime?.start || {}) },
+      end: { ...base.mTime.end, ...(saved.mTime?.end || {}) },
+    },
   };
   for (const key of FILE_KEYS) merged[key] = Array.isArray(saved[key]) ? saved[key] : [];
 
@@ -257,6 +273,16 @@ const el = {
   jira: $('jira'),
   start: $('start'),
   stop: $('stop'),
+  log: $('log-btn'),      // not "log": that id is the <main> element
+  manual: $('manual'),
+  manualPanel: $('manual-panel'),
+  mDate: $('m-date'),
+  mDuration: $('m-duration'),
+  mSelects: {
+    start: { h: $('m-start-h'), m: $('m-start-m') },
+    end:   { h: $('m-end-h'),   m: $('m-end-m') },
+  },
+  periodBtns: document.querySelectorAll('[data-period]'),
   newBtn: $('new'),
   hint: $('hint'),
   description: $('description'),
@@ -359,6 +385,49 @@ function fmtDuration(ms) {
   return `${Math.floor(s / 3600)}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
 }
 
+/**
+ * A day plus 12-hour pieces → a local Date, or null until every piece is set.
+ * 12 AM is midnight and 12 PM is noon.
+ * @param {string} day  YYYY-MM-DD
+ * @param {ClockTime} t
+ */
+function toDate(day, t) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !t.h || !t.m || !t.p) return null;
+  const [y, mo, d] = day.split('-').map(Number);
+  const hour = (Number(t.h) % 12) + (t.p === 'PM' ? 12 : 0);
+  return new Date(y, mo - 1, d, hour, Number(t.m));
+}
+
+/** Manual entry's Start and End as Dates (null while incomplete). */
+const manualRange = () => ({
+  s: toDate(state.mDate, state.mTime.start),
+  e: toDate(state.mDate, state.mTime.end),
+});
+
+/** "1 h 30 min", "45 min" */
+function fmtMinutes(ms) {
+  const total = Math.round(ms / 60000);
+  const h = Math.floor(total / 60);
+  return h ? `${h} h ${total % 60} min` : `${total} min`;
+}
+
+/**
+ * What still stops Manual mode from logging: '' when the date and both times
+ * are set and make sense. End must follow Start on the same day, and can't
+ * be in the future since the work has to have happened.
+ */
+function manualProblem() {
+  const { s, e } = manualRange();
+  const missing = [];
+  if (!state.mDate) missing.push('Date');
+  if (!s) missing.push('Start Time');
+  if (!e) missing.push('End Time');
+  if (missing.length) return `Set ${joinList(missing)} to log.`;
+  if (e <= s) return 'End Time must be after Start Time.';
+  if (e > new Date()) return 'End Time can’t be in the future.';
+  return '';
+}
+
 const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** ["a","b","c"] → "a, b and c" */
@@ -436,6 +505,16 @@ function fillSelect(key, items, placeholder, emptyLabel = 'No entries found') {
 function fillLocalSelects() {
   fillSelect('stage', STAGES.map((name) => ({ id: name, name })), 'Choose…');
   fillSelect('category', CATEGORIES.map((name) => ({ id: name, name })), 'Choose…');
+}
+
+/** Manual mode's hour (01–12) and minute (00–59) lists. */
+function fillTimeSelects() {
+  const hours = Array.from({ length: 12 }, (_, i) => pad(i + 1));
+  const minutes = Array.from({ length: 60 }, (_, i) => pad(i));
+  for (const when of ['start', 'end']) {
+    el.mSelects[when].h.replaceChildren(new Option('HH', ''), ...hours.map((v) => new Option(v, v)));
+    el.mSelects[when].m.replaceChildren(new Option('MM', ''), ...minutes.map((v) => new Option(v, v)));
+  }
 }
 
 /**
@@ -742,6 +821,12 @@ function applyStateToForm() {
   for (const key of COMBO_KEYS) $(key).value = state.links[key]?.name || '';
   renderSubtype();
   for (const key of SELECT_KEYS) el.selects[key].value = state.picks[key];
+
+  el.mDate.value = state.mDate;
+  for (const when of ['start', 'end']) {
+    el.mSelects[when].h.value = state.mTime[when].h;
+    el.mSelects[when].m.value = state.mTime[when].m;
+  }
 }
 
 /** Recompute every derived bit of UI from state. */
@@ -755,10 +840,35 @@ function render() {
 
   el.root.dataset.state = running ? 'running' : hasEntry ? 'stopped' : 'idle';
 
-  // Buttons: all three require a complete form (per spec), plus their own rule.
+  // Manual mode swaps Start and Stop for Log and reveals the time pickers.
+  const manual = state.manual;
+  const problem = manual ? manualProblem() : '';
+  el.start.hidden = manual;
+  el.stop.hidden = manual;
+  el.log.hidden = !manual;
+  el.manualPanel.hidden = !manual;
+  el.manual.setAttribute('aria-pressed', String(manual));
+
+  // Buttons: all require a complete form (per spec), plus their own rule.
   el.start.disabled = busy || !complete || hasEntry;
   el.stop.disabled = busy || !complete || !running;
+  el.log.disabled = busy || !complete || Boolean(problem) || hasEntry;
   el.newBtn.disabled = busy || !complete;
+  el.manual.disabled = busy || hasEntry;      // press New first to switch modes
+
+  // Manual time controls lock once the entry exists, like the classifiers.
+  const timeLocked = busy || hasEntry;
+  el.mDate.disabled = timeLocked;
+  for (const when of ['start', 'end']) {
+    el.mSelects[when].h.disabled = timeLocked;
+    el.mSelects[when].m.disabled = timeLocked;
+  }
+  for (const btn of el.periodBtns) {
+    btn.disabled = timeLocked;
+    btn.setAttribute('aria-pressed', String(state.mTime[btn.dataset.when].p === btn.dataset.period));
+  }
+  const { s, e } = manualRange();
+  el.mDuration.textContent = manual && s && e && e > s ? `Duration: ${fmtMinutes(e - s)}` : '';
 
   // After Start, the classification is fixed so the widget can't drift away
   // from the Notion entry it created.
@@ -779,6 +889,8 @@ function render() {
 
   el.hint.textContent =
     !complete ? missingHint()
+    : manual && !hasEntry ? (problem || 'Ready to log.')
+    : manual ? 'Logged. Add a description, output or files, then press New.'
     : running ? 'Logging. Press Stop when you finish.'
     : hasEntry ? 'Stopped. Add a description, output or files, then press New.'
     : 'Ready to start.';
@@ -790,8 +902,11 @@ function render() {
 /** Status text and elapsed time. Runs every second. */
 function renderClock() {
   if (!state.start) {
-    el.clockState.textContent = 'Not started';
-    el.clockTime.textContent = '0:00:00';
+    // Manual mode previews the duration while the pickers are being set.
+    const { s, e } = manualRange();
+    const preview = state.manual && s && e && e > s;
+    el.clockState.textContent = preview ? 'Manual entry' : 'Not started';
+    el.clockTime.textContent = preview ? fmtDuration(e - s) : '0:00:00';
     return;
   }
   const started = new Date(state.start);
@@ -829,6 +944,20 @@ function renderFiles() {
    11. Actions: Start, Stop, New
    ========================================================================== */
 
+/** The create call's body; Start and Stop are added by the caller. */
+const entryPayload = (startISO) => ({
+  title: state.title.trim(),
+  date: startISO.slice(0, 10),                       // Date: day only
+  start: startISO,                                   // Start: day + time
+  stage: state.picks.stage,
+  category: state.picks.category,
+  subtype: state.picks.subtype,                      // '' when Support
+  // Page ids of every picked link; '' for an optional one left empty.
+  relations: Object.fromEntries(COMBO_KEYS.map((k) => [k, state.links[k]?.id || ''])),
+  jira: state.jira.trim(),
+  ...textPayload(),                                  // include anything typed early
+});
+
 /** Create the Work Log entry. */
 async function startEntry() {
   if (el.start.disabled) return;
@@ -838,24 +967,37 @@ async function startEntry() {
 
   const startedAt = localISO(new Date());
   try {
-    const { id } = await api('/entries', {
-      method: 'POST',
-      json: {
-        title: state.title.trim(),
-        date: startedAt.slice(0, 10),                 // Date: day only
-        start: startedAt,                              // Start: day + time
-        stage: state.picks.stage,
-        category: state.picks.category,
-        subtype: state.picks.subtype,                  // '' when Support
-        // Page ids of every picked link; '' for an optional one left empty.
-        relations: Object.fromEntries(COMBO_KEYS.map((k) => [k, state.links[k]?.id || ''])),
-        jira: state.jira.trim(),
-        ...textPayload(),                              // include anything typed early
-      },
-    });
+    const { id } = await api('/entries', { method: 'POST', json: entryPayload(startedAt) });
     Object.assign(state, { pageId: id, start: startedAt, stop: null, files: [], pipelineFiles: [] });
     save();
     setSync('Entry created in Work Log');
+  } catch (err) {
+    fail(err);
+  } finally {
+    busy = false;
+    render();
+  }
+}
+
+/** Manual mode: create a finished entry with both times from the pickers. */
+async function logEntry() {
+  if (el.log.disabled) return;
+  const { s, e } = manualRange();
+  const startISO = localISO(s);
+  const stopISO = localISO(e);
+
+  busy = true;
+  render();
+  setSync('Logging entry…');
+
+  try {
+    const { id } = await api('/entries', {
+      method: 'POST',
+      json: { ...entryPayload(startISO), stop: stopISO },
+    });
+    Object.assign(state, { pageId: id, start: startISO, stop: stopISO, files: [], pipelineFiles: [] });
+    save();
+    setSync(`Logged ${fmtMinutes(e - s)} in Work Log`);
   } catch (err) {
     fail(err);
   } finally {
@@ -908,7 +1050,11 @@ async function newEntry() {
 
   if (saveTimer) await saveNotes();   // don't lose the last few keystrokes
 
+  // Manual mode and its day carry over, so a run of manual entries for the
+  // same day only needs the times changed. The times themselves are cleared.
+  const { manual, mDate } = state;
   state = emptyState();
+  Object.assign(state, { manual, mDate });
   save();
   for (const key of COMBO_KEYS) combos[key].reset();
   applyStateToForm();
@@ -1063,8 +1209,43 @@ for (const key of TEXT_KEYS) {
   el[key].addEventListener('blur', () => { if (saveTimer) saveNotes(); });
 }
 
+// Manual mode: the toggle, the day, and each hour / minute / AM-PM piece.
+el.manual.addEventListener('click', () => {
+  if (el.manual.disabled) return;
+  state.manual = !state.manual;
+  if (state.manual && !state.mDate) state.mDate = localISO(new Date()).slice(0, 10);
+  save();
+  applyStateToForm();
+  render();
+});
+
+el.mDate.addEventListener('input', () => {
+  state.mDate = el.mDate.value;
+  save();
+  render();
+});
+
+for (const when of ['start', 'end']) {
+  for (const part of ['h', 'm']) {
+    el.mSelects[when][part].addEventListener('change', (event) => {
+      state.mTime[when][part] = event.target.value;
+      save();
+      render();
+    });
+  }
+}
+
+for (const btn of el.periodBtns) {
+  btn.addEventListener('click', () => {
+    state.mTime[btn.dataset.when].p = btn.dataset.period;
+    save();
+    render();
+  });
+}
+
 el.start.addEventListener('click', startEntry);
 el.stop.addEventListener('click', stopEntry);
+el.log.addEventListener('click', logEntry);
 el.newBtn.addEventListener('click', newEntry);
 el.reload.addEventListener('click', loadOptions);
 el.themeLight.addEventListener('click', () => toggleTheme('light'));
@@ -1112,6 +1293,7 @@ window.addEventListener('storage', (event) => {
 
 initTheme();
 fillLocalSelects();
+fillTimeSelects();
 for (const key of COMBO_KEYS) combos[key].setRecent(options[key] || []);
 applyStateToForm();
 render();
