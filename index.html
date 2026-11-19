@@ -122,11 +122,51 @@
       </div>
     </fieldset>
 
-    <!-- Start / Stop / New ----------------------------------------------->
+    <!-- Manual entry: shown only in Manual mode. JS fills the hour and
+         minute lists. Nothing is preselected except the date, so the Log
+         button stays locked until every choice is made. -->
+    <fieldset class="group" id="manual-panel" hidden>
+      <legend>Manual entry</legend>
+      <div class="grid grid--manual">
+        <div class="field">
+          <label for="m-date">Date</label>
+          <input id="m-date" class="text-input" type="date">
+        </div>
+        <div class="field">
+          <span class="label" id="m-start-label">Start Time</span>
+          <div class="time" role="group" aria-labelledby="m-start-label">
+            <div class="select"><select id="m-start-h" aria-label="Start hour"></select></div>
+            <span class="time__colon" aria-hidden="true">:</span>
+            <div class="select"><select id="m-start-m" aria-label="Start minute"></select></div>
+            <div class="seg" role="group" aria-label="Start AM or PM">
+              <button type="button" class="seg__btn" data-when="start" data-period="AM" aria-pressed="false">AM</button>
+              <button type="button" class="seg__btn" data-when="start" data-period="PM" aria-pressed="false">PM</button>
+            </div>
+          </div>
+        </div>
+        <div class="field">
+          <span class="label" id="m-end-label">End Time</span>
+          <div class="time" role="group" aria-labelledby="m-end-label">
+            <div class="select"><select id="m-end-h" aria-label="End hour"></select></div>
+            <span class="time__colon" aria-hidden="true">:</span>
+            <div class="select"><select id="m-end-m" aria-label="End minute"></select></div>
+            <div class="seg" role="group" aria-label="End AM or PM">
+              <button type="button" class="seg__btn" data-when="end" data-period="AM" aria-pressed="false">AM</button>
+              <button type="button" class="seg__btn" data-when="end" data-period="PM" aria-pressed="false">PM</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="dbname" id="m-duration" role="status"></p>
+    </fieldset>
+
+    <!-- Start / Stop / New, plus Manual and Log ---------------------------->
     <div class="controls">
       <button type="button" class="btn btn--start" id="start" disabled>Start</button>
       <button type="button" class="btn btn--stop"  id="stop"  disabled>Stop</button>
+      <button type="button" class="btn btn--start" id="log-btn" disabled hidden>Log</button>
       <button type="button" class="btn btn--new"   id="new"   disabled>New</button>
+      <button type="button" class="btn btn--new btn--toggle" id="manual" aria-pressed="false">Manual</button>
       <p class="hint" id="hint"></p>
     </div>
 
