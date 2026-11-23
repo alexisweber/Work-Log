@@ -94,7 +94,7 @@ const PROPS = {
   platform: 'Platform',       // text now; switch to a select later (see createEntry)
 };
 
-const STAGES = new Set(['Planning', 'Execution', 'Assessment', 'Finalize']);
+const STAGES = new Set(['Planning', 'Execution', 'Assessment', 'Finalize', 'NA']);
 
 /**
  * Category → its own second-level options, mirroring SUBTYPES in app.js.
@@ -112,6 +112,7 @@ const SUBTYPES = {
   ],
   Dissemination: ['Figures', 'Slides', 'Writing', 'Speech'],
   Support: null,
+   Participation: ['Meeting'],
 };
 
 /**
