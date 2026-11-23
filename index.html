@@ -24,6 +24,15 @@
       </div>
     </header>
 
+    <!-- Mode: Active times the work live with Start and Stop; Retroactive logs
+         work that's already done from a Date and two times. -->
+    <div class="mode">
+      <div class="seg" role="group" aria-label="Entry mode">
+        <button type="button" class="seg__btn" data-mode="active" aria-pressed="true">Active</button>
+        <button type="button" class="seg__btn" data-mode="retro"  aria-pressed="false">Retroactive</button>
+      </div>
+    </div>
+
     <!-- Row 1 · Goals: Long-Term → Short-Term → Milestone ----------------->
     <fieldset class="group">
       <legend>Goals</legend>
@@ -122,11 +131,11 @@
       </div>
     </fieldset>
 
-    <!-- Manual entry: shown only in Manual mode. JS fills the hour and
+    <!-- Date and times: shown only in Retroactive mode. JS fills the hour and
          minute lists. Nothing is preselected except the date, so the Log
          button stays locked until every choice is made. -->
-    <fieldset class="group" id="manual-panel" hidden>
-      <legend>Manual entry</legend>
+    <fieldset class="group" id="retro-panel" hidden>
+      <legend>Retroactive entry</legend>
       <div class="grid grid--manual">
         <div class="field">
           <label for="m-date">Date</label>
@@ -160,13 +169,12 @@
       <p class="dbname" id="m-duration" role="status"></p>
     </fieldset>
 
-    <!-- Start / Stop / New, plus Manual and Log ---------------------------->
+    <!-- Active: Start, Stop, Save.  Retroactive: Log, Save. ---------------->
     <div class="controls">
       <button type="button" class="btn btn--start" id="start" disabled>Start</button>
       <button type="button" class="btn btn--stop"  id="stop"  disabled>Stop</button>
       <button type="button" class="btn btn--start" id="log-btn" disabled hidden>Log</button>
-      <button type="button" class="btn btn--new"   id="new"   disabled>New</button>
-      <button type="button" class="btn btn--new btn--toggle" id="manual" aria-pressed="false">Manual</button>
+      <button type="button" class="btn btn--new"   id="save" disabled>Save</button>
       <p class="hint" id="hint"></p>
     </div>
 
