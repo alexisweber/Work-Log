@@ -68,7 +68,6 @@
   color-scheme: dark;
 }
 
-
 /* 2. Base ----------------------------------------------------------------- */
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -302,6 +301,13 @@ select:disabled,
 .combo__list li[aria-selected="true"] { background: var(--run-soft); }
 .combo__list li.is-empty { color: var(--muted); cursor: default; }
 
+/* Marks a finished Task in the list. */
+.combo__tag {
+  margin-left: 0.5rem;
+  color: var(--muted);
+  font-size: 0.6875rem;
+}
+
 /* The source database's name, under each picker. It turns into a warning
    while typed text isn't linked to a page yet. */
 .dbname {
@@ -341,10 +347,11 @@ select:disabled,
 .btn--stop:not(:disabled):hover  { background: color-mix(in srgb, var(--stop) 8%, transparent); }
 .btn--new:not(:disabled):hover   { background: var(--field); }
 
-/* Manual is a toggle: filled and outlined while Manual mode is on. */
-.btn--toggle[aria-pressed="true"] { background: var(--field); border-color: var(--ink); }
+/* Active / Retroactive toggle, under the title. */
+.mode { display: flex; }
+.mode .seg__btn { padding: 0.3rem 0.9rem; font-size: 0.8125rem; }
 
-/* Manual entry: hour : minute and an AM/PM toggle, on one line. */
+/* Retroactive entry: hour : minute and an AM/PM toggle, on one line. */
 .time {
   display: flex;
   align-items: center;
