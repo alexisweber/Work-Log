@@ -4,10 +4,12 @@
  * Layout
  * ------
  *  Title
+ *  Mode        Active · Retroactive                  (toggle)
  *  Goals       Primary · Secondary · Tertiary        (type-ahead relations)
  *  Classifiers Stage · Category · Category's type    (selects)
  *  Links       Task · Meeting · Requests · JIRA      (type-ahead relations + URL)
- *  Buttons     Start · Stop · New
+ *  Retroactive Date · Start Time · End Time          (Retroactive mode only)
+ *  Buttons     Active: Start · Stop · Save   Retroactive: Log · Save
  *  Pipeline    Pipeline Link · Packages · Platform · Pipeline File
  *  Details     Description · Output · Files
  *
@@ -16,11 +18,13 @@
  *  1. On load, fetch page names from the linked databases and fill the
  *     pickers. Every link is a combobox: newest pages first, closest title
  *     match as you type, and older pages found by searching Notion.
- *  2. Start → create a Work Log entry with the fields above.
- *  3. Stop  → write the Stop time to that entry.
+ *  2. Active:       Start → create a Work Log entry, Start = the moment pressed.
+ *     Retroactive:  Log   → create it with Start and Stop from Date + times.
+ *  3. Stop  → (Active) write the Stop time to that entry.
  *  4. Description, Output, Pipeline Link, Packages and Platform autosave;
  *     Files and Pipeline File upload and attach.
- *  5. New   → clear the widget only. The Work Log entry is never touched.
+ *  5. Save  → send the final text to the entry, then clear the widget. It
+ *     unlocks once the entry has a Stop time.
  *
  * Why a proxy?
  * ------------
@@ -76,14 +80,15 @@ const COMBO_KEYS = ['primary', 'secondary', 'tertiary', 'task', 'meeting', 'requ
 const SELECT_KEYS = ['stage', 'category', 'subtype'];
 
 /**
- * What must be filled before Start, Stop and New unlock. Subtype is added
- * only when the chosen Category has a second level. Meeting, Requests and
- * JIRA are optional links. A link counts as filled only once a page has been
+ * What must be filled before Start, Stop and Log unlock. Subtype is added
+ * only when the chosen Category has a second level. Task, Meeting, Requests
+ * and JIRA are optional. A link counts as filled only once a page has been
  * picked from its list; typed text that was never picked doesn't.
  *
- * To make a link required too, add its key here (for example 'meeting').
+ * To make a link required again, add its key here (for example 'task') and
+ * set required: true on that line of SOURCES in worker.js.
  */
-const REQUIRED_KEYS = ['primary', 'secondary', 'tertiary', 'stage', 'category', 'task'];
+const REQUIRED_KEYS = ['primary', 'secondary', 'tertiary', 'stage', 'category'];
 
 /** Display names used in the "what's missing" hint. */
 const LABELS = {
@@ -165,9 +170,9 @@ const subtypesFor = (category) => SUBTYPES[category] || null;
  * @property {string|null} stop     ISO 8601 timestamp with UTC offset
  * @property {PageRef[]} files          File uploads attached to Files
  * @property {PageRef[]} pipelineFiles  File uploads attached to Pipeline File
- * @property {boolean} manual       Manual mode: log a finished item by hand
- * @property {string} mDate         Manual entry day, YYYY-MM-DD
- * @property {{start: ClockTime, end: ClockTime}} mTime  Manual entry times
+ * @property {'active'|'retro'} mode  Active (Start/Stop) or Retroactive (Log)
+ * @property {string} mDate         Retroactive day, YYYY-MM-DD
+ * @property {{start: ClockTime, end: ClockTime}} mTime  Retroactive times
  *
  * @typedef {{h: string, m: string, p: ''|'AM'|'PM'}} ClockTime
  *   12-hour pieces exactly as picked: h "01"–"12", m "00"–"59"
@@ -192,7 +197,7 @@ function emptyState() {
     stop: null,
     files: [],
     pipelineFiles: [],
-    manual: false,
+    mode: 'active',
     mDate: '',
     mTime: { start: emptyClock(), end: emptyClock() },
   };
@@ -217,7 +222,7 @@ function loadState() {
     ...saved,
     picks: { ...base.picks, ...(saved.picks || {}) },
     links: { ...base.links, ...(saved.links || {}) },
-    manual: saved.manual === true,
+    mode: 'active',                // every load starts in Active; the mode isn't remembered
     mTime: {
       start: { ...base.mTime.start, ...(saved.mTime?.start || {}) },
       end: { ...base.mTime.end, ...(saved.mTime?.end || {}) },
@@ -253,9 +258,16 @@ const save = () => writeJSON(CONFIG.storageKey, state);
 /** Cached dropdown options, keyed as in worker.js. */
 let options = readJSON(CONFIG.optionsKey) || {};
 
+/**
+ * Retroactive mode holds its files here until Log, then uploads them and
+ * creates the entry in one go. They live in memory only: reloading the page
+ * drops them.
+ * @type {Record<'files'|'pipelineFiles', File[]>}
+ */
+const pending = { files: [], pipelineFiles: [] };
+
 let busy = false;          // a Start/Stop/upload request is in flight
 let saveTimer = null;      // pending Description/Output autosave
-let confirmTimer = null;   // "Clear anyway?" window on the New button
 
 
 /* ==========================================================================
@@ -274,8 +286,8 @@ const el = {
   start: $('start'),
   stop: $('stop'),
   log: $('log-btn'),      // not "log": that id is the <main> element
-  manual: $('manual'),
-  manualPanel: $('manual-panel'),
+  modeButtons: document.querySelectorAll('[data-mode]'),
+  retroPanel: $('retro-panel'),
   mDate: $('m-date'),
   mDuration: $('m-duration'),
   mSelects: {
@@ -283,7 +295,7 @@ const el = {
     end:   { h: $('m-end-h'),   m: $('m-end-m') },
   },
   periodBtns: document.querySelectorAll('[data-period]'),
-  newBtn: $('new'),
+  save: $('save'),
   hint: $('hint'),
   description: $('description'),
   output: $('output'),
@@ -398,7 +410,10 @@ function toDate(day, t) {
   return new Date(y, mo - 1, d, hour, Number(t.m));
 }
 
-/** Manual entry's Start and End as Dates (null while incomplete). */
+/** Today as YYYY-MM-DD, local time. */
+const todayISO = () => localISO(new Date()).slice(0, 10);
+
+/** Retroactive entry's Start and End as Dates (null while incomplete). */
 const manualRange = () => ({
   s: toDate(state.mDate, state.mTime.start),
   e: toDate(state.mDate, state.mTime.end),
@@ -412,7 +427,7 @@ function fmtMinutes(ms) {
 }
 
 /**
- * What still stops Manual mode from logging: '' when the date and both times
+ * What still stops Retroactive mode from logging: '' when the date and both times
  * are set and make sense. End must follow Start on the same day, and can't
  * be in the future since the work has to have happened.
  */
@@ -507,7 +522,7 @@ function fillLocalSelects() {
   fillSelect('category', CATEGORIES.map((name) => ({ id: name, name })), 'Choose…');
 }
 
-/** Manual mode's hour (01–12) and minute (00–59) lists. */
+/** Retroactive mode's hour (01–12) and minute (00–59) lists. */
 function fillTimeSelects() {
   const hours = Array.from({ length: 12 }, (_, i) => pad(i + 1));
   const minutes = Array.from({ length: 60 }, (_, i) => pad(i));
@@ -614,12 +629,20 @@ function createCombo(key) {
     for (const page of found) {
       if (!pool.some((p) => p.id === page.id)) pool.push(page);
     }
-    if (!query) return pool.slice(0, 25);
+    // Empty field: the Worker's order as is. For Tasks that's open tasks
+    // newest first, then finished ones below, so the whole list is shown.
+    if (!query) return recent.slice(0, 200);
 
+    // Typing: closest title first. Equal matches go newest-created first
+    // (pages with a sort date, i.e. Tasks), then in the Worker's order.
+    const created = (page) => {
+      const t = Date.parse(page.date);
+      return Number.isNaN(t) ? -Infinity : t;
+    };
     return pool
       .map((page, index) => ({ page, score: matchScore(page.name, query), index }))
       .filter((hit) => hit.score < Infinity)
-      .sort((a, b) => a.score - b.score || a.index - b.index)
+      .sort((a, b) => a.score - b.score || created(b.page) - created(a.page) || a.index - b.index)
       .slice(0, 25)
       .map((hit) => hit.page);
   }
@@ -634,6 +657,12 @@ function createCombo(key) {
       li.id = `${key}-opt-${index}`;
       li.setAttribute('role', 'option');
       li.textContent = page.name;
+      if (page.done) {                       // a finished Task, marked as such
+        const tag = document.createElement('span');
+        tag.className = 'combo__tag';
+        tag.textContent = 'Done';
+        li.append(tag);
+      }
       li.setAttribute('aria-selected', String(index === active));
       li.addEventListener('mousedown', (event) => {   // beats blur
         event.preventDefault();
@@ -813,7 +842,7 @@ function missingHint() {
   return `${text.charAt(0).toUpperCase()}${text.slice(1)} to continue.`;
 }
 
-/** Push state into the form controls (used on load, New, and cross-tab sync). */
+/** Push state into the form controls (used on load, Save, and cross-tab sync). */
 function applyStateToForm() {
   el.title.value = state.title;
   el.jira.value = state.jira;
@@ -840,23 +869,27 @@ function render() {
 
   el.root.dataset.state = running ? 'running' : hasEntry ? 'stopped' : 'idle';
 
-  // Manual mode swaps Start and Stop for Log and reveals the time pickers.
-  const manual = state.manual;
-  const problem = manual ? manualProblem() : '';
-  el.start.hidden = manual;
-  el.stop.hidden = manual;
-  el.log.hidden = !manual;
-  el.manualPanel.hidden = !manual;
-  el.manual.setAttribute('aria-pressed', String(manual));
+  // Retroactive mode swaps Start and Stop for Log and reveals Date and times.
+  const retro = state.mode === 'retro';
+  const problem = retro ? manualProblem() : '';
+  el.start.hidden = retro;
+  el.stop.hidden = retro;
+  el.log.hidden = !retro;
+  el.retroPanel.hidden = !retro;
+  for (const btn of el.modeButtons) {
+    btn.setAttribute('aria-pressed', String(btn.dataset.mode === state.mode));
+    btn.disabled = busy || hasEntry;           // Save the entry to switch modes
+  }
 
-  // Buttons: all require a complete form (per spec), plus their own rule.
+  // Buttons: Start, Stop and Log need a complete form (per spec), plus their
+  // own rule. Save needs an entry that has a Stop time.
   el.start.disabled = busy || !complete || hasEntry;
   el.stop.disabled = busy || !complete || !running;
   el.log.disabled = busy || !complete || Boolean(problem) || hasEntry;
-  el.newBtn.disabled = busy || !complete;
-  el.manual.disabled = busy || hasEntry;      // press New first to switch modes
+  el.save.hidden = retro;                      // Retroactive: Log is the only commit
+  el.save.disabled = busy || !hasEntry || running;
 
-  // Manual time controls lock once the entry exists, like the classifiers.
+  // Date and time controls lock once the entry exists, like the classifiers.
   const timeLocked = busy || hasEntry;
   el.mDate.disabled = timeLocked;
   for (const when of ['start', 'end']) {
@@ -868,7 +901,7 @@ function render() {
     btn.setAttribute('aria-pressed', String(state.mTime[btn.dataset.when].p === btn.dataset.period));
   }
   const { s, e } = manualRange();
-  el.mDuration.textContent = manual && s && e && e > s ? `Duration: ${fmtMinutes(e - s)}` : '';
+  el.mDuration.textContent = retro && s && e && e > s ? `Duration: ${fmtMinutes(e - s)}` : '';
 
   // After Start, the classification is fixed so the widget can't drift away
   // from the Notion entry it created.
@@ -877,22 +910,22 @@ function render() {
   for (const key of SELECT_KEYS) el.selects[key].disabled = busy || hasEntry;
   for (const key of COMBO_KEYS) combos[key].sync();
 
-  // Attachments need an entry to attach to.
+  // Active attachments need an entry to attach to. Retroactive ones are held
+  // until Log, which uploads them with the entry.
   for (const key of FILE_KEYS) {
     const zone = el.zones[key];
-    zone.input.disabled = busy || !hasEntry;
+    zone.input.disabled = busy || (!hasEntry && !retro);
     zone.drop.classList.toggle('is-disabled', zone.input.disabled);
-    zone.text.textContent = hasEntry
+    zone.text.textContent = hasEntry || retro
       ? `Drop ${FILE_FIELDS[key].noun}s here or browse`
       : `Start an entry to attach ${FILE_FIELDS[key].noun}s`;
   }
 
-  el.hint.textContent =
-    !complete ? missingHint()
-    : manual && !hasEntry ? (problem || 'Ready to log.')
-    : manual ? 'Logged. Add a description, output or files, then press New.'
-    : running ? 'Logging. Press Stop when you finish.'
-    : hasEntry ? 'Stopped. Add a description, output or files, then press New.'
+  el.hint.textContent = retro
+    ? (!complete ? missingHint() : problem || 'Ready to log.')
+    : hasEntry && running ? 'Logging. Press Stop when you finish, then Save.'
+    : hasEntry ? 'Add a description, output or files if you like, then press Save.'
+    : !complete ? missingHint()
     : 'Ready to start.';
 
   renderClock();
@@ -902,10 +935,10 @@ function render() {
 /** Status text and elapsed time. Runs every second. */
 function renderClock() {
   if (!state.start) {
-    // Manual mode previews the duration while the pickers are being set.
+    // Retroactive mode previews the duration while the pickers are being set.
     const { s, e } = manualRange();
-    const preview = state.manual && s && e && e > s;
-    el.clockState.textContent = preview ? 'Manual entry' : 'Not started';
+    const preview = state.mode === 'retro' && s && e && e > s;
+    el.clockState.textContent = preview ? 'Retroactive entry' : 'Not started';
     el.clockTime.textContent = preview ? fmtDuration(e - s) : '0:00:00';
     return;
   }
@@ -920,7 +953,9 @@ function renderClock() {
 
 function renderFiles() {
   for (const key of FILE_KEYS) {
-    el.zones[key].list.replaceChildren(...state[key].map((file, index) => {
+    // Retroactive lists the files waiting for Log; Active lists attached ones.
+    const items = state.mode === 'retro' ? pending[key] : state[key];
+    el.zones[key].list.replaceChildren(...items.map((file, index) => {
       const li = document.createElement('li');
       const name = document.createElement('span');
       name.textContent = file.name;
@@ -941,7 +976,7 @@ function renderFiles() {
 
 
 /* ==========================================================================
-   11. Actions: Start, Stop, New
+   11. Actions: Start, Stop, Log, Save
    ========================================================================== */
 
 /** The create call's body; Start and Stop are added by the caller. */
@@ -979,7 +1014,12 @@ async function startEntry() {
   }
 }
 
-/** Manual mode: create a finished entry with both times from the pickers. */
+/**
+ * Retroactive mode: add the whole entry to Work Log at once — Date, Start and
+ * Stop from the pickers, every field, and any files — then reset the widget.
+ * Files upload first, so if one fails nothing has been created yet and Log
+ * can simply be pressed again.
+ */
 async function logEntry() {
   if (el.log.disabled) return;
   const { s, e } = manualRange();
@@ -988,22 +1028,43 @@ async function logEntry() {
 
   busy = true;
   render();
-  setSync('Logging entry…');
 
   try {
-    const { id } = await api('/entries', {
+    const uploaded = { files: [], pipelineFiles: [] };
+    for (const key of FILE_KEYS) {
+      for (const file of pending[key]) {
+        setSync(`Uploading ${file.name}…`);
+        const form = new FormData();
+        form.append('file', file, file.name);
+        const upload = await api('/uploads', { method: 'POST', form });
+        uploaded[key].push({ id: upload.id, name: file.name });
+      }
+    }
+
+    setSync('Logging entry…');
+    await api('/entries', {
       method: 'POST',
-      json: { ...entryPayload(startISO), stop: stopISO },
+      json: { ...entryPayload(startISO), stop: stopISO, ...uploaded },
     });
-    Object.assign(state, { pageId: id, start: startISO, stop: stopISO, files: [], pipelineFiles: [] });
-    save();
-    setSync(`Logged ${fmtMinutes(e - s)} in Work Log`);
+
+    resetWidget();
+    setSync(`Logged ${fmtMinutes(e - s)} in Work Log. Ready for the next entry.`);
   } catch (err) {
     fail(err);
   } finally {
     busy = false;
     render();
   }
+}
+
+/** Back to a blank widget in Active mode, the default. */
+function resetWidget() {
+  state = emptyState();
+  pending.files = [];
+  pending.pipelineFiles = [];
+  save();
+  for (const key of COMBO_KEYS) combos[key].reset();
+  applyStateToForm();
 }
 
 /** Write the Stop time (and flush any unsaved notes). */
@@ -1033,39 +1094,31 @@ async function stopEntry() {
 }
 
 /**
- * Clear the widget for a new entry. The Notion entry is left as is.
- * If the entry is still running, the first press asks for confirmation.
+ * Active mode: finish the entry and clear the widget. The final text goes to the Work Log
+ * entry first; if that fails the widget keeps everything so nothing is lost
+ * and Save can be pressed again. Locked until the entry has a Stop time.
  */
-async function newEntry() {
-  if (el.newBtn.disabled) return;
+async function saveEntry() {
+  if (el.save.disabled) return;
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  busy = true;
+  render();
+  setSync('Saving…');
 
-  const running = state.pageId && !state.stop;
-  if (running && !confirmTimer) {
-    el.newBtn.textContent = 'Clear anyway?';
-    setSync('This entry has no Stop time yet. Press again to clear the widget anyway.');
-    confirmTimer = setTimeout(resetNewButton, 4000);
+  try {
+    await api(`/entries/${state.pageId}`, { method: 'PATCH', json: textPayload() });
+  } catch (err) {
+    fail(err);
+    busy = false;
+    render();
     return;
   }
-  resetNewButton();
+  busy = false;
 
-  if (saveTimer) await saveNotes();   // don't lose the last few keystrokes
-
-  // Manual mode and its day carry over, so a run of manual entries for the
-  // same day only needs the times changed. The times themselves are cleared.
-  const { manual, mDate } = state;
-  state = emptyState();
-  Object.assign(state, { manual, mDate });
-  save();
-  for (const key of COMBO_KEYS) combos[key].reset();
-  applyStateToForm();
-  setSync('Cleared. The Work Log entry is unchanged.');
+  resetWidget();
+  setSync('Saved to Work Log. Ready for the next entry.');
   render();
-}
-
-function resetNewButton() {
-  clearTimeout(confirmTimer);
-  confirmTimer = null;
-  el.newBtn.textContent = 'New';
 }
 
 
@@ -1115,6 +1168,19 @@ async function attachFiles(key, fileList) {
   const { prop, noun } = FILE_FIELDS[key];
   const pageId = state.pageId;
   const files = [...fileList];            // copy before the input is reset
+
+  // Retroactive: there's no entry yet. Hold the files until Log.
+  if (state.mode === 'retro') {
+    if (busy) return;
+    const tooBig = files.filter((f) => f.size > CONFIG.maxFileBytes).map((f) => f.name);
+    pending[key].push(...files.filter((f) => f.size <= CONFIG.maxFileBytes));
+    el.zones[key].input.value = '';
+    renderFiles();
+    if (tooBig.length) setSync(`Over 20 MB, not added: ${tooBig.join(', ')}`, 'error');
+    else setSync(`${capitalize(noun)}${files.length > 1 ? 's' : ''} ready. They upload when you press Log.`);
+    return;
+  }
+
   if (!pageId || busy || !files.length) return;
 
   busy = true;
@@ -1154,6 +1220,12 @@ async function attachFiles(key, fileList) {
  * @param {number} index  position in that zone's list
  */
 async function removeFile(key, index) {
+  if (state.mode === 'retro') {            // not uploaded yet: just drop it
+    if (busy) return;
+    pending[key].splice(index, 1);
+    renderFiles();
+    return;
+  }
   if (busy || !state.pageId) return;
   const { prop, noun } = FILE_FIELDS[key];
   busy = true;
@@ -1209,15 +1281,22 @@ for (const key of TEXT_KEYS) {
   el[key].addEventListener('blur', () => { if (saveTimer) saveNotes(); });
 }
 
-// Manual mode: the toggle, the day, and each hour / minute / AM-PM piece.
-el.manual.addEventListener('click', () => {
-  if (el.manual.disabled) return;
-  state.manual = !state.manual;
-  if (state.manual && !state.mDate) state.mDate = localISO(new Date()).slice(0, 10);
-  save();
-  applyStateToForm();
-  render();
-});
+// Active / Retroactive toggle, the day, and each hour / minute / AM-PM piece.
+for (const btn of el.modeButtons) {
+  btn.addEventListener('click', () => {
+    if (btn.disabled || state.mode === btn.dataset.mode) return;
+    if (state.mode === 'retro' && (pending.files.length || pending.pipelineFiles.length)) {
+      pending.files = [];
+      pending.pipelineFiles = [];
+      setSync('Files waiting for Log were cleared.');
+    }
+    state.mode = btn.dataset.mode;
+    if (state.mode === 'retro' && !state.mDate) state.mDate = todayISO();
+    save();
+    applyStateToForm();
+    render();
+  });
+}
 
 el.mDate.addEventListener('input', () => {
   state.mDate = el.mDate.value;
@@ -1246,7 +1325,7 @@ for (const btn of el.periodBtns) {
 el.start.addEventListener('click', startEntry);
 el.stop.addEventListener('click', stopEntry);
 el.log.addEventListener('click', logEntry);
-el.newBtn.addEventListener('click', newEntry);
+el.save.addEventListener('click', saveEntry);
 el.reload.addEventListener('click', loadOptions);
 el.themeLight.addEventListener('click', () => toggleTheme('light'));
 el.themeDark.addEventListener('click', () => toggleTheme('dark'));
@@ -1281,7 +1360,9 @@ window.addEventListener('drop', (event) => event.preventDefault());
 // Keep two copies of the widget (two tabs, or the same embed twice) in step.
 window.addEventListener('storage', (event) => {
   if (event.key !== CONFIG.storageKey) return;
+  const { mode } = state;                       // the mode is per copy, not shared
   state = loadState();
+  state.mode = state.pageId ? 'active' : mode;  // an open entry is always Active
   applyStateToForm();
   render();
 });
@@ -1299,3 +1380,4 @@ applyStateToForm();
 render();
 loadOptions();
 setInterval(renderClock, 1000);
+
