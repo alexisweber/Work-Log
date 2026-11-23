@@ -103,7 +103,7 @@ const LABELS = {
   request: 'Requests',
 };
 
-const STAGES = ['Planning', 'Execution', 'Assessment', 'Finalize'];
+const STAGES = ['Planning', 'Execution', 'Assessment', 'Finalize', 'NA'];
 
 /**
  * Category → its own second-level options. A category that isn't a key here
@@ -123,6 +123,7 @@ const SUBTYPES = {
   ],
   Dissemination: ['Figures', 'Slides', 'Writing', 'Speech'],
   Support: null,
+   Participation: ['Meeting'],
 };
 
 const CATEGORIES = Object.keys(SUBTYPES);
