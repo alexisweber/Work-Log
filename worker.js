@@ -37,31 +37,42 @@ const WORK_LOG_DB = 'PASTE_WORK_LOG_DATABASE_ID';
 /**
  * Long-Term and Short-Term Goals only offer pages whose "Category" select is
  * "Research". The property in those databases must be a Select named exactly
- * "Category". The filter applies to both the recent list and the title search.
+ * "Category". The filter applies to both the starting list and the title search.
  */
 const RESEARCH_ONLY = { property: 'Category', select: { equals: 'Research' } };
 
 /**
- * One entry per linked field. Keys match COMBO_KEYS in app.js.
+ * Kept so an older SOURCES block that still says `filter: TASKS_OPEN` doesn't
+ * break. It hides every finished task, so the Tasks line should use
+ * `doneProperty: 'Done'` instead (see SOURCES below).
+ */
+const TASKS_OPEN = { property: 'Done', checkbox: { equals: false } };
+
+/**
+ * One entry per linked field. Keys match COMBO_KEYS in app.js. Every field is a
+ * type-ahead picker: it starts from a list and can search the whole database.
  *   database  where the names come from
  *   relation  the Work Log relation property it fills
  *   required  whether Start refuses without it
- *   recent    true  → newest pages first, and searchable by title. Every
- *                     field in the widget is a type-ahead picker, so keep
- *                     this true.
- *             false → the whole database sorted by name. Only useful if a
- *                     field is ever turned back into a plain dropdown; such
- *                     a field can't be searched.
  *   filter    optional Notion filter to shorten the list, for example
  *             { property: 'Status', status: { does_not_equal: 'Done' } }
+ *   sortBy    optional name of a Date (or Created time) property. Pages are
+ *             listed newest first by that date; pages where it is empty come
+ *             after all the others, in alphanumeric order. Without it, pages
+ *             are listed by when they were created in Notion, newest first.
+ *   doneProperty  optional name of a Checkbox property. Pages where it is
+ *             checked are still returned, but the starting list puts every
+ *             unchecked page first and the checked ones below, each group in
+ *             the sort order above. A title search mixes both, in sort order.
+ *             Each checked page comes back with done: true.
  */
 const SOURCES = {
-  primary:   { database: 'PASTE_LONG_TERM_GOALS_DATABASE_ID',  relation: 'Long-Term Goals',  required: true,  recent: true,  filter: RESEARCH_ONLY },
-  secondary: { database: 'PASTE_SHORT_TERM_GOALS_DATABASE_ID', relation: 'Short-Term Goals', required: true,  recent: true,  filter: RESEARCH_ONLY },
-  tertiary:  { database: 'PASTE_MILESTONES_DATABASE_ID',       relation: 'Milestones',       required: true,  recent: true,  filter: null },
-  task:      { database: 'PASTE_TASKS_DATABASE_ID',            relation: 'Tasks',            required: true,  recent: true,  filter: null },
-  meeting:   { database: 'PASTE_MEETING_DB_DATABASE_ID',       relation: 'Meeting',          required: false, recent: true,  filter: null },
-  request:   { database: 'PASTE_REQUESTS_DB_DATABASE_ID',      relation: 'Requests',         required: false, recent: true,  filter: null },
+  primary:   { database: 'PASTE_LONG_TERM_GOALS_DATABASE_ID',  relation: 'Long-Term Goals',  required: true,  filter: RESEARCH_ONLY },
+  secondary: { database: 'PASTE_SHORT_TERM_GOALS_DATABASE_ID', relation: 'Short-Term Goals', required: true,  filter: RESEARCH_ONLY },
+  tertiary:  { database: 'PASTE_MILESTONES_DATABASE_ID',       relation: 'Milestones',       required: true,  filter: null },
+  task:      { database: 'PASTE_TASKS_DATABASE_ID',            relation: 'Tasks',            required: false, filter: null, sortBy: 'Created', doneProperty: 'Done' },
+  meeting:   { database: 'PASTE_MEETING_DB_DATABASE_ID',       relation: 'Meeting',          required: false, filter: null },
+  request:   { database: 'PASTE_REQUESTS_DB_DATABASE_ID',      relation: 'Requests',         required: false, filter: null },
 };
 
 /** Work Log property names. Change the right-hand side if yours differ. */
@@ -109,7 +120,7 @@ const SUBTYPES = {
  */
 const JIRA_BASE_URL = '';
 
-/** How many recent pages the pickers start with before any typing. */
+/** How many pages each picker starts with before any typing. */
 const RECENT_LIMIT = 100;
 
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
@@ -170,9 +181,7 @@ async function listOptions(env) {
   // allSettled, not all: one bad database shouldn't hide the others, and the
   // error should name every dropdown that failed so they can be fixed in one pass.
   const settled = await Promise.allSettled(
-    entries.map(([, source]) => (source.recent
-      ? queryRecent(env, source.database, source.filter)
-      : queryAll(env, source.database, source.filter))),
+    entries.map(([, source]) => loadPages(env, source)),
   );
 
   const failures = [];
@@ -197,29 +206,24 @@ async function listOptions(env) {
 
 /**
  * GET /search?source=meeting&q=kickoff → { results: [{id, name}] }
- * Searches the whole database by title, so pages older than the recent
- * list stay reachable from the pickers.
+ * Searches the whole database by title, so pages older than the starting
+ * list stay reachable from the pickers. Uses the same filter and order as
+ * the list.
  */
 async function searchSource(env, key, query) {
   const source = SOURCES[key];
-  if (!source || !source.recent) throw new HttpError(400, 'Unknown search source.');
+  if (!source) throw new HttpError(400, 'Unknown search source.');
 
   const q = asString(query).trim();
   if (q.length < 2) return { results: [] };
 
-  const titleProp = await titlePropertyName(env, source.database);
-  const titleFilter = { property: titleProp, title: { contains: q } };
-
-  const res = await notion(env, 'POST', `/databases/${source.database}/query`, {
-    page_size: 20,
-    filter: source.filter ? { and: [source.filter, titleFilter] } : titleFilter,
-    sorts: [{ timestamp: 'created_time', direction: 'descending' }],
-  });
-
-  return { results: res.results.map((page) => ({ id: page.id, name: titleOf(page) })) };
+  return { results: await loadPages(env, source, { search: q }) };
 }
 
-/** POST /entries → { id, url } */
+/**
+ * POST /entries → { id, url }. Retroactive mode also sends `stop` and the
+ * `files` / `pipelineFiles` upload lists, so the whole entry arrives at once.
+ */
 async function createEntry(env, body) {
   const title = asString(body.title).trim();
   if (!title) throw new HttpError(400, 'Add a title.');
@@ -227,6 +231,14 @@ async function createEntry(env, body) {
   if (!isTimestamp(body.start)) throw new HttpError(400, 'Start time is missing or malformed.');
   if (!STAGES.has(body.stage)) throw new HttpError(400, `Unknown stage "${body.stage}".`);
   if (!(body.category in SUBTYPES)) throw new HttpError(400, `Unknown category "${body.category}".`);
+
+  // Retroactive entries arrive finished: Stop is sent with the create call, and
+  // must come after Start. Live entries omit it and PATCH it later.
+  const hasStop = body.stop !== undefined && body.stop !== null && body.stop !== '';
+  if (hasStop) {
+    if (!isTimestamp(body.stop)) throw new HttpError(400, 'Stop time is malformed.');
+    if (Date.parse(body.stop) <= Date.parse(body.start)) throw new HttpError(400, 'Stop must be after Start.');
+  }
 
   // The second level is required exactly when the category defines one.
   const allowed = SUBTYPES[body.category];
@@ -238,6 +250,7 @@ async function createEntry(env, body) {
     [PROPS.name]: { title: [{ type: 'text', text: { content: title.slice(0, 2000) } }] },
     [PROPS.date]: { date: { start: body.date } },
     [PROPS.start]: { date: { start: body.start } },
+    ...(hasStop ? { [PROPS.stop]: { date: { start: body.stop } } } : {}),
     [PROPS.stage]: { select: { name: body.stage } },
     [PROPS.category]: { select: { name: body.category } },
     [PROPS.type]: { select: subtype ? { name: subtype } : null },
@@ -250,6 +263,13 @@ async function createEntry(env, body) {
     [PROPS.packages]: richText(body.packages),
     [PROPS.platform]: richText(body.platform),
   };
+
+  // Retroactive entries arrive complete, so their files come with them. Each
+  // is an id from POST /uploads; Notion expects it attached within an hour.
+  if (Array.isArray(body.files) && body.files.length) properties[PROPS.files] = fileList(body.files, 'Files');
+  if (Array.isArray(body.pipelineFiles) && body.pipelineFiles.length) {
+    properties[PROPS.pipelineFile] = fileList(body.pipelineFiles, 'Pipeline File');
+  }
 
   for (const [key, source] of Object.entries(SOURCES)) {
     const id = body.relations?.[key];
@@ -360,33 +380,118 @@ async function notion(env, method, path, body) {
   }
 }
 
-/** Every page in a database (following pagination), sorted by name. */
-async function queryAll(env, databaseId, filter) {
-  const pages = [];
-  let cursor;
-  do {
-    const body = { page_size: 100 };
-    if (filter) body.filter = filter;
-    if (cursor) body.start_cursor = cursor;
+/** Most pages fetched when a source has a custom sort (10 requests of 100). */
+const MAX_SORTED_PAGES = 1000;
 
-    const res = await notion(env, 'POST', `/databases/${databaseId}/query`, body);
-    for (const page of res.results) pages.push({ id: page.id, name: titleOf(page) });
-    cursor = res.has_more ? res.next_cursor : undefined;
-  } while (cursor);
+/**
+ * The pages a picker offers, in the order it shows them.
+ *
+ * Without `sortBy`, Notion does the work: newest created first, one request.
+ * With `sortBy`, every matching page is fetched so the blanks can be placed
+ * last, then sorted here: newest date first, pages with no date after them,
+ * ties and blanks in alphanumeric order.
+ *
+ * @param {object} env
+ * @param {typeof SOURCES[keyof typeof SOURCES]} source
+ * @param {{search?: string}} [opts]  a title fragment to search for
+ * @returns {Promise<{id: string, name: string}[]>}
+ */
+async function loadPages(env, source, { search } = {}) {
+  const filters = [];
+  if (source.filter) filters.push(source.filter);
+  if (search) {
+    const titleProp = await titlePropertyName(env, source.database);
+    filters.push({ property: titleProp, title: { contains: search } });
+  }
+  const maxRequests = source.sortBy ? MAX_SORTED_PAGES / 100 : 1;
 
-  return pages.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+  // Starting list with a Done checkbox: unchecked pages first, checked below.
+  // Two queries, so a long run of finished pages can't push open ones out.
+  if (source.doneProperty && !search) {
+    const isDone = (equals) => ({ property: source.doneProperty, checkbox: { equals } });
+    const [open, done] = await Promise.all([
+      queryPages(env, source, [...filters, isDone(false)], maxRequests),
+      queryPages(env, source, [...filters, isDone(true)], DONE_REQUESTS),
+    ]);
+    open.sort(newestFirst);
+    done.sort(newestFirst);
+    return [...open.slice(0, RECENT_LIMIT), ...done.slice(0, RECENT_LIMIT)].map(shapePage);
+  }
+
+  const pages = await queryPages(env, source, filters, maxRequests);
+  if (source.sortBy) pages.sort(newestFirst);
+  return pages.slice(0, search ? 20 : RECENT_LIMIT).map(shapePage);
 }
 
-/** The newest pages in a database, most recently created first. */
-async function queryRecent(env, databaseId, filter) {
-  const body = {
-    page_size: Math.min(RECENT_LIMIT, 100),
-    sorts: [{ timestamp: 'created_time', direction: 'descending' }],
-  };
-  if (filter) body.filter = filter;
+/** Checked pages fetched for a Done-aware list: 3 requests of 100. */
+const DONE_REQUESTS = 3;
 
-  const res = await notion(env, 'POST', `/databases/${databaseId}/query`, body);
-  return res.results.map((page) => ({ id: page.id, name: titleOf(page) }));
+/** One query, followed across up to `maxRequests` Notion pages of results. */
+async function queryPages(env, source, filters, maxRequests) {
+  const body = {
+    page_size: 100,
+    sorts: [source.sortBy
+      ? { property: source.sortBy, direction: 'descending' }
+      : { timestamp: 'created_time', direction: 'descending' }],
+  };
+  if (filters.length) body.filter = filters.length > 1 ? { and: filters } : filters[0];
+
+  const pages = [];
+  let cursor;
+  for (let request = 0; request < maxRequests; request++) {
+    if (cursor) body.start_cursor = cursor;
+    const res = await notion(env, 'POST', `/databases/${source.database}/query`, body);
+    for (const page of res.results) {
+      pages.push({
+        id: page.id,
+        name: titleOf(page),
+        date: source.sortBy ? dateOf(page, source.sortBy) : null,
+        done: source.doneProperty ? page.properties?.[source.doneProperty]?.checkbox === true : false,
+      });
+    }
+    if (!res.has_more) break;
+    cursor = res.next_cursor;
+  }
+  return pages;
+}
+
+/**
+ * What the widget receives for a page. `date` (the sort date) and `done` are
+ * only present when they carry something, so other lists stay {id, name}.
+ */
+const shapePage = ({ id, name, date, done }) => ({
+  id,
+  name,
+  ...(date ? { date } : {}),
+  ...(done ? { done: true } : {}),
+});
+
+/** Alphanumeric by title: "Task 2" before "Task 10", case ignored. */
+const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+
+/** Newest date first; pages with no date last; then alphanumeric. */
+function newestFirst(a, b) {
+  const ta = Date.parse(a.date);          // NaN when the date is empty
+  const tb = Date.parse(b.date);
+  const hasA = !Number.isNaN(ta);
+  const hasB = !Number.isNaN(tb);
+
+  if (hasA && hasB) return tb - ta || byName(a, b);
+  if (hasA !== hasB) return hasA ? -1 : 1;
+  return byName(a, b);
+}
+
+/**
+ * The date in a page property as an ISO string, or null when it's empty.
+ * Reads a Date property, a Created time property, or a formula returning a date.
+ */
+function dateOf(page, name) {
+  const prop = page.properties?.[name];
+  if (!prop) return null;
+  if (prop.type === 'date') return prop.date?.start || null;
+  if (prop.type === 'created_time') return prop.created_time || null;
+  if (prop.type === 'formula' && prop.formula?.type === 'date') return prop.formula.date?.start || null;
+  return null;
 }
 
 /** Text of a page's title property, whatever that property is called. */
